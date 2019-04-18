@@ -14,11 +14,13 @@ and all others are found in the main {project name}.p04.hdf project hdf file or 
 """
 
 import sys
+import os
 import h5py
 import numpy as np
 import matplotlib
 matplotlib.use('agg')
 import matplotlib.pyplot as plt
+from scipy import interpolate
 
 velocitiesPath = "Datasets/Depth-averaged Velocity (64)/Values"
 timesPath = "Results/Unsteady/Output/Output Blocks/Base Output/Unsteady Time Series/Time Date Stamp"
@@ -36,33 +38,68 @@ Depths:                 Depths at the nodes
 """
 valuesDict = {}
 
-def quiverPlot(X, Y, U, V, timeStamp):
-    fig3, ax3 = plt.subplots()
-    ax3.set_title(timeStamp)
+def quiverPlot(X, Y, U, V, timeStamp, scale):
+    figure, axis = plt.subplots()
+    axis.set_title(timeStamp)
     plt.axis('equal')
     M = np.hypot(U, V)
-    Q = ax3.quiver(X, Y, U, V, M, units='xy', scale=.01)  # pivot='tip', width=1, scale=1)
-    qk = ax3.quiverkey(Q, 0.9, 0.9, 1, r'$1 \frac{m}{s}$', labelpos='E', coordinates='figure')
+    Q = axis.quiver(X, Y, U, V, M, units='xy', scale=scale)  # pivot='tip', width=1, scale=1)
+    quiverKey = axis.quiverkey(Q, 0.9, 0.9, 1, r'$1 \frac{m}{s}$', labelpos='E',
+                               coordinates='figure')
 
 
-def plotData(projectFilename):
+def plotVelocities(projectFilename, outputPath, scale=1.0, fileExtension="png"):
     X = valuesDict["X"]
     Y = valuesDict["Y"]
     for timeStamp in valuesDict["Times"]:
+        outputFilename = createOutputFilename(outputPath, projectFilename, timeStamp,
+                                              fileExtension, customLabel="velocities")
         timeIndex = valuesDict["Times"].index(timeStamp)
-        basePath = projectFilename.split(".")[0]
-        timeLabel = parseDate(timeStamp).replace("/", "_").replace(" ", "_").replace(":", "")
-        outputFilename = "%s_%s.png" % (basePath, timeLabel)
         U = np.array(valuesDict["U"][timeIndex])
         V = np.array(valuesDict["V"][timeIndex])
         print("Saving plot to %s" % outputFilename)
-        quiverPlot(X, Y, U, V, timeStamp)
+        quiverPlot(X, Y, U, V, timeStamp, scale)
+        plt.savefig(outputFilename)
+        plt.close()
+
+def plotDepths(projectFilename, outputPath, fileExtension="png", xmin=0.0, xmax=10000.0,
+               dx=4.0, ymin=0.0, ymax=10000.0, dy=4.0, zmin=0.0, zmax=100.0, dz=1.0):
+    X = valuesDict["X"]
+    Y = valuesDict["Y"]
+
+    # Prepare uniform interpolation grid
+    xi = np.linspace(xmin, xmax, int(dx))
+    yi = np.linspace(ymin, ymax, int(dy))
+    Xi, Yi = np.meshgrid(xi, yi)
+
+    for timeStamp in valuesDict["Times"]:
+        outputFilename = createOutputFilename(outputPath, projectFilename, timeStamp,
+                                              fileExtension, customLabel="depths")
+        timeIndex = valuesDict["Times"].index(timeStamp)
+        Z = np.array(valuesDict["Depths"][timeIndex])
+
+        # Interpolate to grid
+        interpToGrid = interpolate.interp2d(X, Y, Z, kind='cubic')
+        Zi = interpToGrid(xi, yi)
+
+        # Plot depths
+        print("Saving plot to %s" % outputFilename)
+        figure, axis = plt.subplots()
+        axis.set_title(timeStamp)
+        plt.axis('equal')
+        axis.pcolor(Xi, Yi, Zi)
         plt.savefig(outputFilename)
         plt.close()
 
 
-def getValues(projectFile, fort64File, fort63File, tinFile):
-    """Returns a dictionary of values {x,y,u,v,time,baseDepth,TIN}"""
+def getValues(projectFilename, fort64Filename, fort63Filename, tinFilename):
+    """Get and compute values from the four specified input files"""
+
+    # Open input files
+    projectFile = h5py.File(projectFilename, "r")
+    fort63File = h5py.File(fort63Filename, "r")
+    fort64File = h5py.File(fort64Filename, "r")
+    tinFile = open(tinFilename, "r")
 
     # Velocities
     velocities = fort64File[velocitiesPath]
@@ -111,23 +148,31 @@ def getValues(projectFile, fort64File, fort63File, tinFile):
         groundElevation = valuesDict["Z"][i]
         waterDepths = []
         for waterSurfaceElevation in waterSurfaceElevations[i]:
-            depth = waterSurfaceElevation - groundElevation
-            if groundElevation > -999.0 and depth > 0.0:
+            if waterSurfaceElevation > -999.0 and groundElevation > -999.0:
+                depth = waterSurfaceElevation - groundElevation
                 waterDepths.append(depth)
             else:
                 waterDepths.append(0.0)
         waterDepthsList.append(waterDepths)
     valuesDict["Depths"] = waterDepthsList
 
+def createOutputFilename(outputPath, projectFilename, timeStamp, fileExtension, customLabel=""):
+    pathParts = os.path.splitext(projectFilename)[0].split("/")
+    baseFilename = pathParts[-1]
+    timeLabel = parseDate(timeStamp).replace("/", "_").replace(" ", "_").replace(":", "")
+    if customLabel != "":
+        outputFilename = "%s/%s_%s_%s.%s" % (outputPath, baseFilename, timeLabel, customLabel, fileExtension)
+    else:
+        outputFilename = "%s/%s_%s.%s" % (outputPath, baseFilename, timeLabel, fileExtension)
+    return outputFilename
 
-def writeToAscii(projectFilename, header, dataFormatString, fileExtension):
+
+def writeToAscii(projectFilename, header, dataFormatString, outputPath, fileExtension):
     """Creates an output file for each time step in TecPlot format
     from the dictionary created by getValues"""
     for timeStamp in valuesDict["Times"]:
+        outputFilename = createOutputFilename(outputPath, projectFilename, timeStamp, fileExtension)
         timeIndex = valuesDict["Times"].index(timeStamp)
-        basePath = projectFilename.split(".")[0]
-        timeLabel = parseDate(timeStamp).replace("/", "_").replace(" ", "_").replace(":", "")
-        outputFilename = "%s_%s.%s" % (basePath, timeLabel, fileExtension)
         outputFile = open(outputFilename, "w")
         lines = [header]
         for i in range(len(valuesDict["X"])):
@@ -143,20 +188,20 @@ def writeToAscii(projectFilename, header, dataFormatString, fileExtension):
         outputFile.close()
 
 
-def writeToCsv(projectFilename):
+def writeToCsv(projectFilename, outputPath):
     """Creates an output file for each time step in comma-delimited format
     from the dictionary created by getValues"""
     header = "X,Y,Z,U,V,Depth"
     dataFormatString = "%f,%f,%f,%f,%f,%f"
-    writeToAscii(projectFilename, header, dataFormatString, "csv")
+    writeToAscii(projectFilename, header, dataFormatString, outputPath, "csv")
 
 
-def writeToTecPlot(projectFilename):
+def writeToTecPlot(projectFilename, outputPath):
     """Creates an output file for each time step in TecPlot format
     from the dictionary created by getValues"""
     header = 'VARIABLES = "X" "Y" "Z" "U" "V" "DEPTH"'
     dataFormatString = "%f %f %f %f %f %f"
-    writeToAscii(projectFilename, header, dataFormatString, "dat")
+    writeToAscii(projectFilename, header, dataFormatString, outputPath, "dat")
 
 
 def parseDate(timeString):
@@ -187,26 +232,40 @@ def parseDate(timeString):
 if __name__ == "__main__":
     # This section gets filenames with either command-line args (semicolon-separated)
     # or with input from running it directly.
-    try:
-        projectFilename, fort64Filename, fort63Filename, tinFilename = sys.argv[1].split(";")
-    except:
-        projectFilename = input("Main project HDF5 file (p*.hdf): ")
-        fort64Filename = input("ADCIRC HDF5 velocity file (fort64.h5): ")
-        fort63Filename = input("ADCIRC HDF5 water surface elevation file (fort63.h5): ")
-        tinFilename = input("TIN grid file: ")
 
-    # Open the input files
-    projectFile = h5py.File(projectFilename, "r")
-    fort64File = h5py.File(fort64Filename, "r")
-    fort63File = h5py.File(fort63Filename, "r")
-    tinFile = open(tinFilename, "r")
+    # try:
+    #     projectFilename, fort64Filename, fort63Filename, tinFilename = sys.argv[1].split(";")
+    # except:
+    #     projectFilename = input("Main project HDF5 file (p*.hdf): ")
+    #     fort64Filename = input("ADCIRC HDF5 velocity file (fort64.h5): ")
+    #     fort63Filename = input("ADCIRC HDF5 water surface elevation file (fort63.h5): ")
+    #     tinFilename = input("TIN grid file: ")
+
+    # Enter full paths to project HDF5 output file and ADCIRC files generated by RasMapper
+    # projectFilename = "C:/Users/q0hectes/Documents/IdeaProjects/HDF5utilityForDaveSmith/src/Muncie.p04.hdf"
+    # fort63Filename = "C:/Users/q0hectes/Documents/IdeaProjects/HDF5utilityForDaveSmith/src/fort63.h5"
+    # fort64Filename = "C:/Users/q0hectes/Documents/IdeaProjects/HDF5utilityForDaveSmith/src/fort64.h5"
+    # tinFilename = "C:/Users/q0hectes/Documents/IdeaProjects/HDF5utilityForDaveSmith/src/2D interior Area_TIN.grd"
+    # outputPath = "C:/Users/q0hectes/Documents/IdeaProjects/HDF5utilityForDaveSmith/src"
+    # vectorScale = 0.01
+    projectFilename = "F:/HDF_utility_for_Dave_Smith/ModelForTesting/HEC-RAS/SF_Clearwater.p01.hdf"
+    fort63Filename = "F:/HDF_utility_for_Dave_Smith/ModelForTesting/HEC-RAS/P1/fort63.h5"
+    fort64Filename = "F:/HDF_utility_for_Dave_Smith/ModelForTesting/HEC-RAS/P1/fort64.h5"
+    tinFilename = "F:/HDF_utility_for_Dave_Smith/ModelForTesting/HEC-RAS/P1/2D domain_TIN.grd"
+    outputPath = "F:/HDF_utility_for_Dave_Smith/ModelForTesting/HEC-RAS/P1"
+    vectorScale = 0.1
 
     # First, create the dictionary of relevant values from the read files,
     # and then calculate the depth values from the tin or grid file.
-    getValues(projectFile, fort64File, fort63File, tinFile)
+    getValues(projectFilename, fort64Filename, fort63Filename, tinFilename)
+
     meanDepth = np.mean(np.transpose(valuesDict["Depths"])[0])
     print(meanDepth)
-    # writeToCsv(projectFilename)
-    # writeToTecPlot(projectFilename)
-    plotData(projectFilename)
+    ymin = 1799000 + 1000.0
+    ymax = 1799000 + 7000.0
+
+    writeToTecPlot(projectFilename, outputPath)
+    plotVelocities(projectFilename, outputPath, scale=vectorScale)
+    # plotDepths(projectFilename, outputPath, fileExtension="png", xmin=404000.0, xmax=413000.0,
+    #            dx=100.0, ymin=ymin, ymax=ymax, dy=100.0, zmin=-10.0, zmax=20.0, dz=1.0)
 
