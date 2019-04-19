@@ -261,11 +261,9 @@ if __name__ == "__main__":
 
     meanDepth = np.mean(np.transpose(valuesDict["Depths"])[0])
     print(meanDepth)
-    ymin = 1799000 + 1000.0
-    ymax = 1799000 + 7000.0
 
     writeToTecPlot(projectFilename, outputPath)
     plotVelocities(projectFilename, outputPath, scale=vectorScale)
     # plotDepths(projectFilename, outputPath, fileExtension="png", xmin=404000.0, xmax=413000.0,
-    #            dx=100.0, ymin=ymin, ymax=ymax, dy=100.0, zmin=-10.0, zmax=20.0, dz=1.0)
+    #            dx=100.0, ymin=1800000.0, ymax=1806000.0, dy=100.0, zmin=-10.0, zmax=20.0, dz=1.0)
 
